@@ -13,8 +13,29 @@ interface SeedOptions {
 }
 
 type DocumentSplitter = RecursiveCharacterTextSplitter | MarkdownTextSplitter
+import DescopeClient from '@descope/node-sdk';
 
-async function seed(url: string, limit: number, indexName: string, cloudName: ServerlessSpecCloudEnum, regionName: string, options: SeedOptions) {
+async function createRelation(userId: string, docUrl: string) {
+  try {
+    const descopeClient = DescopeClient({
+      projectId: process.env.NEXT_PUBLIC_DESCOPE_PROJECT_ID as string,
+      managementKey: process.env.DESCOPE_MANAGEMENT_KEY as string
+    });
+
+    const relations = [{
+      resource: docUrl,
+      relationDefinition: 'owner',
+      namespace: 'document',
+      target: userId,
+    }];
+
+    await descopeClient.management.authz.createRelations(relations);
+  } catch (error) {
+    console.log("failed to initialize: " + error)
+  }
+}
+
+async function seed(url: string, userId: string, limit: number, indexName: string, cloudName: ServerlessSpecCloudEnum, regionName: string, options: SeedOptions) {
   try {
     // Initialize the Pinecone client
     const pinecone = new Pinecone();
@@ -59,7 +80,7 @@ async function seed(url: string, limit: number, indexName: string, cloudName: Se
 
     // Upsert vectors into the Pinecone index
     await chunkedUpsert(index!, vectors, '', 10);
-
+    await createRelation(userId, url);
     // Return the first document
     return documents[0];
   } catch (error) {
@@ -68,7 +89,7 @@ async function seed(url: string, limit: number, indexName: string, cloudName: Se
   }
 }
 
-async function embedDocument(doc: Document): Promise<PineconeRecord> {
+async function embedDocument(doc: Document, userId: string): Promise<PineconeRecord> {
   try {
     // Generate OpenAI embeddings for the document content
     const embedding = await getEmbeddings(doc.pageContent);
@@ -82,9 +103,11 @@ async function embedDocument(doc: Document): Promise<PineconeRecord> {
       values: embedding, // The vector values are the OpenAI embeddings
       metadata: { // The metadata includes details about the document
         chunk: doc.pageContent, // The chunk of text that the vector represents
-        text: doc.metadata.text as string, // The text of the document
-        url: doc.metadata.url as string, // The URL where the document was found
-        hash: doc.metadata.hash as string // The hash of the document content
+        text: doc. metadata.text as string, // The text of the document
+        url: doc. metadata.url as string, // The URL where the document was found
+        hash: doc. metadata.hash as string, // The hash of the document content
+        // Add: userId field to the metadata object
+        userId: userId // The user ID of the user who seeded the document
       }
     } as PineconeRecord;
   } catch (error) {
@@ -92,6 +115,7 @@ async function embedDocument(doc: Document): Promise<PineconeRecord> {
     throw error
   }
 }
+
 
 async function prepareDocument(page: Page, splitter: DocumentSplitter): Promise<Document[]> {
   // Get the content of the page
